@@ -131,4 +131,8 @@ export const config = {
   maxWorkers: parseInt(process.env.MAX_WORKERS, 10) || 24,
   batchSizeRecords: parseInt(process.env.DB_INSERT_CHUNK_SIZE, 10) || 5000,
   maxConcurrentDocAIRequests: parseInt(process.env.MAX_CONCURRENT_DOCAI_REQUESTS, 10) || 150,
+
+  // DocAI Versions
+  docAiActiveVersionId: process.env.DOCAI_ACTIVE_VERSION_ID,
+  docAiFallbackVersionId: process.env.DOCAI_FALLBACK_VERSION_ID,
 };

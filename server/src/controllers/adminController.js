@@ -129,11 +129,12 @@ export const stopSql = async (req, res) => {
 
 export const getDocAiStatus = async (req, res) => {
     try {
-        const name = `projects/${config.projectId}/locations/${config.location}/processors/${config.processorId}`;
-        const [processor] = await docAiClient.getProcessor({ name });
+        // Check status of the ACTIVE version specifically
+        const name = `projects/${config.projectId}/locations/${config.location}/processors/${config.processorId}/processorVersions/${config.docAiActiveVersionId}`;
+        const [version] = await docAiClient.getProcessorVersion({ name });
 
-        // state: ENABLED, DISABLED, ENABLING, DISABLING
-        res.json({ status: processor.state, name: processor.name });
+        // state: DEPLOYED, DEPLOYING, UNDEPLOYED, UNDEPLOYING, etc.
+        res.json({ status: version.state, name: version.name });
     } catch (error) {
         logger.error('Error getting DocAI status:', error);
         res.status(500).json({ error: error.message });
@@ -142,23 +143,34 @@ export const getDocAiStatus = async (req, res) => {
 
 export const deployDocAi = async (req, res) => {
     try {
-        const name = `projects/${config.projectId}/locations/${config.location}/processors/${config.processorId}`;
+        const processorName = `projects/${config.projectId}/locations/${config.location}/processors/${config.processorId}`;
+        const activeVersionName = `${processorName}/processorVersions/${config.docAiActiveVersionId}`;
 
-        logger.info(`Deploying Document AI processor: ${config.processorId}`);
-        broadcast({ type: 'admin:status', message: `Deploying Document AI processor...` });
+        logger.info(`Deploying Active Version: ${config.docAiActiveVersionId}`);
+        broadcast({ type: 'admin:status', message: `Deploying Active Version...` });
 
-        const [operation] = await docAiClient.enableProcessor({ name });
+        const [deployOp] = await docAiClient.deployProcessorVersion({ name: activeVersionName });
 
-        // Background wait
-        operation.promise().then(() => {
-            logger.info('Document AI Deployed');
-            broadcast({ type: 'admin:status', message: 'Document AI Deployed Successfully', status: 'ENABLED' });
+        deployOp.promise().then(async () => {
+            logger.info('Active Version Deployed. Setting as Default...');
+            broadcast({ type: 'admin:status', message: 'Active Version Deployed. Setting as Default...', status: 'DEPLOYING' });
+
+            // Set as Default
+            const [setDefaultOp] = await docAiClient.setDefaultProcessorVersion({
+                processor: processorName,
+                defaultProcessorVersion: activeVersionName
+            });
+
+            await setDefaultOp.promise();
+            logger.info('Active Version is now Default');
+            broadcast({ type: 'admin:status', message: 'Active Version is now Default', status: 'DEPLOYED' });
+
         }).catch(err => {
             logger.error('Error deploying DocAI:', err);
             broadcast({ type: 'admin:status', message: `Error deploying DocAI: ${err.message}`, status: 'ERROR' });
         });
 
-        res.json({ message: 'Deploy operation initiated', operation: operation.name });
+        res.json({ message: 'Deploy operation initiated', operation: deployOp.name });
     } catch (error) {
         logger.error('Error deploying DocAI:', error);
         res.status(500).json({ error: error.message });
@@ -167,22 +179,36 @@ export const deployDocAi = async (req, res) => {
 
 export const undeployDocAi = async (req, res) => {
     try {
-        const name = `projects/${config.projectId}/locations/${config.location}/processors/${config.processorId}`;
+        const processorName = `projects/${config.projectId}/locations/${config.location}/processors/${config.processorId}`;
+        const activeVersionName = `${processorName}/processorVersions/${config.docAiActiveVersionId}`;
+        const fallbackVersionName = `${processorName}/processorVersions/${config.docAiFallbackVersionId}`;
 
-        logger.info(`Undeploying Document AI processor: ${config.processorId}`);
-        broadcast({ type: 'admin:status', message: `Undeploying Document AI processor...` });
+        logger.info(`Undeploying Active Version. Switching to Fallback: ${config.docAiFallbackVersionId}`);
+        broadcast({ type: 'admin:status', message: `Switching to Fallback Version...` });
 
-        const [operation] = await docAiClient.disableProcessor({ name });
+        // 1. Set Fallback as Default
+        const [setDefaultOp] = await docAiClient.setDefaultProcessorVersion({
+            processor: processorName,
+            defaultProcessorVersion: fallbackVersionName
+        });
 
-        operation.promise().then(() => {
-            logger.info('Document AI Undeployed');
-            broadcast({ type: 'admin:status', message: 'Document AI Undeployed Successfully', status: 'DISABLED' });
+        setDefaultOp.promise().then(async () => {
+            logger.info('Fallback is now Default. Undeploying Active Version...');
+            broadcast({ type: 'admin:status', message: 'Fallback is now Default. Undeploying Active Version...', status: 'UNDEPLOYING' });
+
+            // 2. Undeploy Active Version
+            const [undeployOp] = await docAiClient.undeployProcessorVersion({ name: activeVersionName });
+            await undeployOp.promise();
+
+            logger.info('Active Version Undeployed');
+            broadcast({ type: 'admin:status', message: 'Active Version Undeployed Successfully', status: 'UNDEPLOYED' });
+
         }).catch(err => {
             logger.error('Error undeploying DocAI:', err);
             broadcast({ type: 'admin:status', message: `Error undeploying DocAI: ${err.message}`, status: 'ERROR' });
         });
 
-        res.json({ message: 'Undeploy operation initiated', operation: operation.name });
+        res.json({ message: 'Undeploy operation initiated', operation: setDefaultOp.name });
     } catch (error) {
         logger.error('Error undeploying DocAI:', error);
         res.status(500).json({ error: error.message });
