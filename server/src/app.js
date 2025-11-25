@@ -29,7 +29,10 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.use(express.json());
-app.use(fileUpload());
+app.use(fileUpload({
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB max file size
+  abortOnLimit: true
+}));
 
 // Initialize database on startup
 initializeDatabase().catch(err => logger.error('Database initialization failed:', err));
